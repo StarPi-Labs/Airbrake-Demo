@@ -14,7 +14,7 @@ void setup() {
 // the loop routine runs over and over again forever:
 void loop() {
   // read the input on analog pin GPIO36:
-  int analogValue = analogRead(36);
+  int analogValue = analogRead(15);
   // Rescale to potentiometer's voltage (from 0V to 3.3V):
   float voltage = floatMap(analogValue, 0, 4095, 0, 3.3);
 
@@ -23,5 +23,5 @@ void loop() {
   Serial.print(analogValue);
   Serial.print(", Voltage: ");
   Serial.println(voltage);
-  delay(100);
+  delay(10);
 }
