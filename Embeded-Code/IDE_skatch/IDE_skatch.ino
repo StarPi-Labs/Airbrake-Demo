@@ -6,7 +6,7 @@ const int MOTOR_STEP_PIN = 33;
 const int MOTOR_DIRECTION_PIN = 25;
 
 // Tuning parameters
-const float SMOOTHING_ALPHA = 0.10f;   // Lower = smoother, slower response.
+const int ANALOG_DEADBAND = 6;         // Ignore tiny ADC jitter around idle value.
 const long MIN_TARGET_POS = -2000;
 const long MAX_TARGET_POS = 2000;
 const float MAX_SPEED_STEPS_S = 1200.0f;
@@ -30,24 +30,24 @@ void setup() {
 }
 
 void loop() {
-  static float filteredAnalog = -1.0f;
+  static int latchedAnalog = -1;
 
   int analogValue = analogRead(ANALOG_INPUT_PIN);
-  if (filteredAnalog < 0.0f) {
-    filteredAnalog = (float)analogValue;
-  } else {
-    filteredAnalog = (SMOOTHING_ALPHA * analogValue) + ((1.0f - SMOOTHING_ALPHA) * filteredAnalog);
+  if (latchedAnalog < 0) {
+    latchedAnalog = analogValue;
+  } else if (abs(analogValue - latchedAnalog) >= ANALOG_DEADBAND) {
+    latchedAnalog = analogValue;
   }
 
-  float voltage = floatMap(filteredAnalog, 0.0f, 4095.0f, 0.0f, 3.3f);
-  long desiredPosition = (long)floatMap(filteredAnalog, 0.0f, 4095.0f, (float)MIN_TARGET_POS, (float)MAX_TARGET_POS);
+  float voltage = floatMap((float)latchedAnalog, 0.0f, 4095.0f, 0.0f, 3.3f);
+  long desiredPosition = (long)floatMap((float)latchedAnalog, 0.0f, 4095.0f, (float)MIN_TARGET_POS, (float)MAX_TARGET_POS);
   stepper.setTargetPositionInSteps(desiredPosition);
   long localCurrentPosition = stepper.getCurrentPositionInSteps();
 
   Serial.print("Analog Raw: ");
   Serial.print(analogValue);
-  Serial.print(", Analog Smoothed: ");
-  Serial.print(filteredAnalog, 1);
+  Serial.print(", Analog Latched: ");
+  Serial.print(latchedAnalog);
   Serial.print(", Voltage: ");
   Serial.print(voltage, 3);
   Serial.print(" V, Target Pos: ");

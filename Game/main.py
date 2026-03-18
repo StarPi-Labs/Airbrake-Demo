@@ -44,8 +44,11 @@ def main():
 			while True:
 				line = ser.readline()
 				if line:
+					print(f"Raw Line: {line.decode('utf-8', errors='replace').rstrip()}")
+					'''					
 					analog_value = line.decode("utf-8", errors="replace").rstrip().split(",")[0].split(":")[1].strip()
 					print(f"Analog Value: {analog_value}")
+					'''
 				else:
 					print("Disconnected.")
 					break
