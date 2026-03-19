@@ -2,7 +2,7 @@
 
 // IO pin assignments
 const int ANALOG_INPUT_PIN = 15;
-const int SERVO_SIGNAL_PIN = 33;
+const int SERVO_SIGNAL_PIN = 13;
 
 // Tuning parameters
 const int ANALOG_DEADBAND = 6;      // Ignore tiny ADC jitter around idle value.
