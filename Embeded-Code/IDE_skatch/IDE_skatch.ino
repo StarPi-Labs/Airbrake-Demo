@@ -40,7 +40,7 @@ void loop() {
     lastPulseUs = targetPulseUs;
   }
 
-  Serial.print(", Analog Latched: ");
+  Serial.print("Analog Latched: ");
   Serial.println(latchedAnalog);
 
   delay(20);
