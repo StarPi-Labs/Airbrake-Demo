@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, createMemo, Show, For, on } from "solid-js";
+import { Component, createSignal, createEffect, createMemo, Show, For } from "solid-js";
 import { GraphCardProps } from "../models/ui/graph-card-props";
 import TelemetryCard from "./TelemetryCard";
 
@@ -18,13 +18,18 @@ const GraphCard: Component<GraphCardProps> = (props) => {
     //---- Buffer circolare ----
     let buffer = new CircularBuffer<Record<string, number | string>>(props.maxPoints || 100);
     const [tick, setTick] = createSignal(0);
+    let lastResetKey: number | undefined = props.resetKey;
 
-    createEffect(on(() => props.resetKey, () => {
+    createEffect(() => {
+        const nextResetKey = props.resetKey;
+        if (nextResetKey === undefined || nextResetKey === lastResetKey) return;
+        lastResetKey = nextResetKey;
         buffer = new CircularBuffer<Record<string, number | string>>(props.maxPoints || 100);
         setTick(t => t + 1);
-    }, { defer: true }));
+    });
 
-    createEffect(on(() => props.newPoint, (pt) => {
+    createEffect(() => {
+        const pt = props.newPoint;
         if (!pt) return;
         // se per qualche motivo cambia la capacità del buffer
         if (buffer.capacity !== (props.maxPoints || 100)) {
@@ -33,7 +38,7 @@ const GraphCard: Component<GraphCardProps> = (props) => {
 
         buffer.push(pt);
         setTick(t => t + 1);
-    }, { defer: true }));
+    });
 
     const stats = createMemo(() => {
         tick();

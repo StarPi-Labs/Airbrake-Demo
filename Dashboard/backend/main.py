@@ -110,6 +110,8 @@ class TelemetryGenerator:
         self._temp = 20.0
         self._pres = 1013.0
         self._rh = 55.0
+        self._status_ok = True
+        self._gps_ok = True
 
         # Lateral acceleration state for smooth curves
         self._accel_x = 0.0
@@ -255,6 +257,8 @@ class TelemetryGenerator:
         self._temp = 20.0 + random.uniform(-2.0, 2.0)
         self._pres = 1013.0 + random.uniform(-2.0, 2.0)
         self._rh = 55.0 + random.uniform(-5.0, 5.0)
+        self._status_ok = True
+        self._gps_ok = True
         self._accel_x = 0.0
         self._accel_y = 0.0
         self._post_flight_hold_s = 0.0
@@ -345,42 +349,45 @@ class TelemetryGenerator:
 
         self._update_flight(dt_s)
 
-        # Attitude trends follow flight phase with smooth noisy motion.
-        if self._vvel > 0:
-            target_pitch = clamp(8.0 + self._vvel / 18.0, -15.0, 18.0)
-        else:
-            target_pitch = clamp(-6.0 + self._vvel / 22.0, -20.0, 8.0)
+        if self._flight_state != "complete":
+            # Attitude trends follow flight phase with smooth noisy motion.
+            if self._vvel > 0:
+                target_pitch = clamp(8.0 + self._vvel / 18.0, -15.0, 18.0)
+            else:
+                target_pitch = clamp(-6.0 + self._vvel / 22.0, -20.0, 8.0)
 
-        self._pitch = self._smooth(self._pitch, target_pitch + random.uniform(-0.8, 0.8), 0.08)
-        self._roll = self._smooth(self._roll, random.uniform(-6.0, 6.0), 0.05)
-        yaw_rate = 0.7 + 1.2 * (self._hvel / 80.0)
-        self._yaw = (self._yaw + yaw_rate * dt_s * 12.0 + random.uniform(-0.5, 0.5)) % 360.0
+            self._pitch = self._smooth(self._pitch, target_pitch + random.uniform(-0.8, 0.8), 0.08)
+            self._roll = self._smooth(self._roll, random.uniform(-6.0, 6.0), 0.05)
+            yaw_rate = 0.7 + 1.2 * (self._hvel / 80.0)
+            self._yaw = (self._yaw + yaw_rate * dt_s * 12.0 + random.uniform(-0.5, 0.5)) % 360.0
 
-        # Position drifts with horizontal velocity and heading.
-        ground_speed_m_s = self._hvel
-        dx = ground_speed_m_s * math.cos(math.radians(self._yaw)) * dt_s
-        dy = ground_speed_m_s * math.sin(math.radians(self._yaw)) * dt_s
-        self._lat += dy / 111_111.0
-        self._long += dx / (111_111.0 * max(math.cos(math.radians(self._lat)), 0.25))
+            # Position drifts with horizontal velocity and heading.
+            ground_speed_m_s = self._hvel
+            dx = ground_speed_m_s * math.cos(math.radians(self._yaw)) * dt_s
+            dy = ground_speed_m_s * math.sin(math.radians(self._yaw)) * dt_s
+            self._lat += dy / 111_111.0
+            self._long += dx / (111_111.0 * max(math.cos(math.radians(self._lat)), 0.25))
 
-        # Atmosphere model from altitude with smoothing and slight turbulence.
-        target_temp = 20.0 - 0.0065 * self._alt
-        target_pres = 1013.25 * (1.0 - 2.25577e-5 * self._alt) ** 5.2559
-        target_rh = clamp(62.0 - 0.018 * self._alt, 15.0, 90.0)
-        self._temp = self._smooth(self._temp, target_temp + random.uniform(-0.35, 0.35), 0.12)
-        self._pres = self._smooth(self._pres, target_pres + random.uniform(-0.9, 0.9), 0.12)
-        self._rh = self._smooth(self._rh, target_rh + random.uniform(-0.8, 0.8), 0.10)
+            # Atmosphere model from altitude with smoothing and slight turbulence.
+            target_temp = 20.0 - 0.0065 * self._alt
+            target_pres = 1013.25 * (1.0 - 2.25577e-5 * self._alt) ** 5.2559
+            target_rh = clamp(62.0 - 0.018 * self._alt, 15.0, 90.0)
+            self._temp = self._smooth(self._temp, target_temp + random.uniform(-0.35, 0.35), 0.12)
+            self._pres = self._smooth(self._pres, target_pres + random.uniform(-0.9, 0.9), 0.12)
+            self._rh = self._smooth(self._rh, target_rh + random.uniform(-0.8, 0.8), 0.10)
 
-        # Lateral accelerations are smooth vibrations + maneuver coupling.
-        lateral_target_x = 0.12 * math.sin(self._flight_t * 2.0) + 0.03 * self._roll
-        lateral_target_y = 0.12 * math.cos(self._flight_t * 1.5) + 0.03 * self._pitch
-        self._accel_x = self._smooth(self._accel_x, lateral_target_x + random.uniform(-0.04, 0.04), 0.15)
-        self._accel_y = self._smooth(self._accel_y, lateral_target_y + random.uniform(-0.04, 0.04), 0.15)
+            # Lateral accelerations are smooth vibrations + maneuver coupling.
+            lateral_target_x = 0.12 * math.sin(self._flight_t * 2.0) + 0.03 * self._roll
+            lateral_target_y = 0.12 * math.cos(self._flight_t * 1.5) + 0.03 * self._pitch
+            self._accel_x = self._smooth(self._accel_x, lateral_target_x + random.uniform(-0.04, 0.04), 0.15)
+            self._accel_y = self._smooth(self._accel_y, lateral_target_y + random.uniform(-0.04, 0.04), 0.15)
 
-        # status/gps become less reliable with high vibration and near-apogee dynamics.
-        dynamic_stress = abs(self._vertical_accel) + abs(self._roll) * 0.2 + abs(self._pitch) * 0.2
-        status_prob = clamp(0.995 - dynamic_stress * 0.004, 0.92, 0.999)
-        gps_prob = clamp(0.98 - self._airbrake * 0.08 - abs(self._pitch) * 0.002, 0.86, 0.995)
+            # status/gps become less reliable with high vibration and near-apogee dynamics.
+            dynamic_stress = abs(self._vertical_accel) + abs(self._roll) * 0.2 + abs(self._pitch) * 0.2
+            status_prob = clamp(0.995 - dynamic_stress * 0.004, 0.92, 0.999)
+            gps_prob = clamp(0.98 - self._airbrake * 0.08 - abs(self._pitch) * 0.002, 0.86, 0.995)
+            self._status_ok = random.random() < status_prob
+            self._gps_ok = random.random() < gps_prob
 
         sample = {
             "ts": now,
@@ -389,13 +396,13 @@ class TelemetryGenerator:
             "roll": self._roll,
             "pitch": self._pitch,
             "yaw": self._yaw,
-            "status": random.random() < status_prob,
+            "status": self._status_ok,
             "alt": self._alt,
             "vvel": self._vvel,
             "hvel": self._hvel,
             "lat": self._lat,
             "long": self._long,
-            "gps": random.random() < gps_prob,
+            "gps": self._gps_ok,
             "temp": self._temp,
             "pres": self._pres,
             "rh": self._rh,
