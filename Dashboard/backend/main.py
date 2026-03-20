@@ -61,6 +61,9 @@ def detect_usb_port() -> str | None:
 
 class TelemetryGenerator:
     def __init__(self) -> None:
+        self._launch_lat = 43.725
+        self._launch_long = 10.393694444444445
+
         self._flight_t = 0.0
         self._last_ts = int(time.time() * 1000)
         self._launch_idle_s = 1.0
@@ -73,10 +76,10 @@ class TelemetryGenerator:
 
         # Launch/mass model placeholders (easy to tune later)
         self._burn_time_s = 20.0
-        self._rocket_dry_mass_kg = 12.0
+        self._rocket_dry_mass_kg = 20.0
         self._motor_mass_initial_kg = 4.5
         self._motor_mass_burnout_kg = 1.4
-        self._motor_accel_peak_m_s2 = 42.0
+        self._motor_accel_peak_m_s2 = 200.0
         self._motor_accel_end_ratio = 0.8
 
         # Vertical drag factors (simple quadratic model).
@@ -103,8 +106,10 @@ class TelemetryGenerator:
         self._roll = 0.0
         self._pitch = 0.0
         self._yaw = 0.0
-        self._lat = 43.37
-        self._long = 10.13
+        self._lat = self._launch_lat
+        self._long = self._launch_long
+        self._vel_east_m_s = 0.0
+        self._vel_north_m_s = 0.0
 
         # Atmospheric state
         self._temp = 20.0
@@ -218,6 +223,7 @@ class TelemetryGenerator:
         clamped = int(clamp(raw_value, 0, 4096))
         self._airbrake_command_raw = clamped
         self._airbrake_command_norm = clamped / 4096.0
+        self._airbrake = self._airbrake_command_norm
         return {
             "accepted": True,
             "source": "serial",
@@ -249,11 +255,13 @@ class TelemetryGenerator:
         self._vertical_accel = 0.0
         self._airbrake = self._airbrake_command_norm
         self._flight_state = "ready"
-        self._roll = random.uniform(-2.0, 2.0)
-        self._pitch = random.uniform(-2.0, 2.0)
-        self._yaw = random.uniform(0.0, 360.0)
-        self._lat = 43.37 + random.uniform(-0.002, 0.002)
-        self._long = 10.13 + random.uniform(-0.002, 0.002)
+        self._roll = random.uniform(-1.5, 1.5)
+        self._pitch = random.uniform(-1.5, 1.5)
+        self._yaw = random.uniform(-2.0, 2.0)
+        self._lat = self._launch_lat
+        self._long = self._launch_long
+        self._vel_east_m_s = 0.0
+        self._vel_north_m_s = 0.0
         self._temp = 20.0 + random.uniform(-2.0, 2.0)
         self._pres = 1013.0 + random.uniform(-2.0, 2.0)
         self._rh = 55.0 + random.uniform(-5.0, 5.0)
@@ -278,18 +286,19 @@ class TelemetryGenerator:
             # Hold final state until explicit restart request.
             self._vvel = 0.0
             self._vertical_accel = 0.0
-            self._hvel = self._smooth(self._hvel, 0.0, 0.10)
             return
 
         self._flight_t += dt_s
 
         # Keep rocket on launch pad until launch delay expires.
         if self._flight_t < self._launch_idle_s:
-            self._airbrake = self._smooth(self._airbrake, self._airbrake_command_norm, 0.18)
+            self._airbrake = self._airbrake_command_norm
             self._vertical_accel = 0.0
             self._vvel = 0.0
             self._alt = 0.0
-            self._hvel = self._smooth(self._hvel, 0.0, 0.20)
+            self._vel_east_m_s = self._smooth(self._vel_east_m_s, 0.0, 0.20)
+            self._vel_north_m_s = self._smooth(self._vel_north_m_s, 0.0, 0.20)
+            self._hvel = math.hypot(self._vel_east_m_s, self._vel_north_m_s)
             self._flight_state = "ready"
             return
 
@@ -302,9 +311,8 @@ class TelemetryGenerator:
             burn_progress = burn_elapsed / self._burn_time_s
             thrust_accel = self._motor_accel_peak_m_s2 * (1.0 - (1.0 - self._motor_accel_end_ratio) * burn_progress)
 
-        # Airbrake opening is externally commanded (0..4096 mapped to 0..1).
-        # Keep a small actuator lag so movement is physically plausible.
-        self._airbrake = self._smooth(self._airbrake, self._airbrake_command_norm, 0.18)
+        # Airbrake opening is directly commanded (0..4096 mapped to 0..1).
+        self._airbrake = self._airbrake_command_norm
 
         total_mass = self._current_total_mass()
         thrust_force = total_mass * thrust_accel
@@ -327,18 +335,39 @@ class TelemetryGenerator:
         self._vvel += self._vertical_accel * dt_s
         self._alt = max(0.0, self._alt + self._vvel * dt_s)
 
+        # Trig-coupled horizontal dynamics: motor vector + wind + damping.
+        yaw_rad = math.radians(self._yaw)
+        pitch_rad = math.radians(self._pitch)
+        roll_rad = math.radians(self._roll)
+
+        motor_h_accel = max(0.0, thrust_accel) * max(0.0, math.sin(abs(pitch_rad)))
+        roll_side_accel = max(0.0, thrust_accel) * math.sin(roll_rad) * 0.35
+
+        accel_north_motor = motor_h_accel * math.cos(yaw_rad) - roll_side_accel * math.sin(yaw_rad)
+        accel_east_motor = motor_h_accel * math.sin(yaw_rad) + roll_side_accel * math.cos(yaw_rad)
+
+        wind_speed = 5.0 + 2.5 * math.sin(self._flight_t / 7.0)
+        wind_heading_rad = math.radians(10.0 * math.sin(self._flight_t / 11.0))
+        wind_north = wind_speed * math.cos(wind_heading_rad)
+        wind_east = wind_speed * math.sin(wind_heading_rad)
+
+        drag_h = 0.035 + 0.06 * self._airbrake
+        self._vel_north_m_s += accel_north_motor * dt_s
+        self._vel_east_m_s += accel_east_motor * dt_s
+        self._vel_north_m_s = self._smooth(self._vel_north_m_s, wind_north, 0.02) - drag_h * self._vel_north_m_s * dt_s
+        self._vel_east_m_s = self._smooth(self._vel_east_m_s, wind_east, 0.02) - drag_h * self._vel_east_m_s * dt_s
+
+        self._hvel = clamp(math.hypot(self._vel_east_m_s, self._vel_north_m_s), 0.0, 120.0)
+
+        # Convert ENU velocity components into geodetic drift.
+        self._lat += (self._vel_north_m_s * dt_s) / 111_111.0
+        self._long += (self._vel_east_m_s * dt_s) / (111_111.0 * max(math.cos(math.radians(self._lat)), 0.25))
+
         if self._vvel <= 0.0 and self._flight_t > self._launch_idle_s:
             self._vvel = 0.0
             self._vertical_accel = 0.0
             self._flight_state = "complete"
             return
-
-        # Horizontal speed: mild wind drift, damped over time.
-        wind_target = 7.0 + 4.0 * math.sin(self._flight_t / 8.0)
-        if thrust_accel > 0:
-            wind_target += 2.0
-        self._hvel = self._smooth(self._hvel, wind_target + random.uniform(-0.8, 0.8), 0.08)
-        self._hvel = clamp(self._hvel, 0.0, 80.0)
 
     def next_sample(self) -> Dict[str, float | int | bool | str]:
         now = int(time.time() * 1000)
@@ -352,21 +381,20 @@ class TelemetryGenerator:
         if self._flight_state != "complete":
             # Attitude trends follow flight phase with smooth noisy motion.
             if self._vvel > 0:
-                target_pitch = clamp(8.0 + self._vvel / 18.0, -15.0, 18.0)
+                target_pitch = clamp(7.0 + self._vvel / 22.0, -10.0, 16.0)
             else:
-                target_pitch = clamp(-6.0 + self._vvel / 22.0, -20.0, 8.0)
+                target_pitch = clamp(-4.0 + self._vvel / 22.0, -12.0, 6.0)
+
+            heading_deg = 0.0
+            if self._hvel > 0.15:
+                heading_deg = math.degrees(math.atan2(self._vel_east_m_s, self._vel_north_m_s))
+
+            target_roll = clamp(3.0 * math.sin(self._flight_t * 0.8) + random.uniform(-0.9, 0.9), -9.0, 9.0)
+            target_yaw = clamp(0.45 * heading_deg + 3.0 * math.sin(self._flight_t / 6.5), -25.0, 25.0)
 
             self._pitch = self._smooth(self._pitch, target_pitch + random.uniform(-0.8, 0.8), 0.08)
-            self._roll = self._smooth(self._roll, random.uniform(-6.0, 6.0), 0.05)
-            yaw_rate = 0.7 + 1.2 * (self._hvel / 80.0)
-            self._yaw = (self._yaw + yaw_rate * dt_s * 12.0 + random.uniform(-0.5, 0.5)) % 360.0
-
-            # Position drifts with horizontal velocity and heading.
-            ground_speed_m_s = self._hvel
-            dx = ground_speed_m_s * math.cos(math.radians(self._yaw)) * dt_s
-            dy = ground_speed_m_s * math.sin(math.radians(self._yaw)) * dt_s
-            self._lat += dy / 111_111.0
-            self._long += dx / (111_111.0 * max(math.cos(math.radians(self._lat)), 0.25))
+            self._roll = self._smooth(self._roll, target_roll, 0.10)
+            self._yaw = self._smooth(self._yaw, target_yaw, 0.10)
 
             # Atmosphere model from altitude with smoothing and slight turbulence.
             target_temp = 20.0 - 0.0065 * self._alt
