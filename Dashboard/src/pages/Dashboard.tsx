@@ -101,7 +101,6 @@ const Dashboard: Component = () => {
                 <h1 class="text-2xl font-semibold">Dashboard</h1>
                 <div class="flex items-center gap-2 flex-wrap">
                     <div class={connectionBadgeClass()}>{connectionLabel()}</div>
-                    <div class="badge badge-success badge-outline">Serial Only</div>
                     <div class="badge badge-outline">Airbrake {sample().airbrakePct.toFixed(1)}%</div>
                 </div>
             </div>
