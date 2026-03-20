@@ -10,6 +10,9 @@ import AccellerationGraphCard from "../components/AccellerationGraphCard";
 import AltitudeTracker from "../components/AltitudeTracker";
 
 const Dashboard: Component = () => {
+    const telemetryWsUrl = import.meta.env.VITE_TELEMETRY_WS_URL ?? "ws://localhost:8000/ws/telemetry";
+    const [connectionMode, setConnectionMode] = createSignal<"connecting" | "live" | "fallback">("connecting");
+
     const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
     const randomBool = (trueChance = 0.9) => Math.random() < trueChance;
 
@@ -55,22 +58,91 @@ const Dashboard: Component = () => {
     };
 
     const [sample, setSample] = createSignal<AtmosphericSample>(makeSample());
+    let ws: WebSocket | undefined;
+    let reconnectTimeout: number | undefined;
+    let fallbackInterval: number | undefined;
 
-    const interval = setInterval(() => {
-        setSample(makeSample());
-    }, 100);
+    const stopFallback = () => {
+        if (!fallbackInterval) return;
+        window.clearInterval(fallbackInterval);
+        fallbackInterval = undefined;
+    };
 
-    onCleanup(() => clearInterval(interval));
+    const startFallback = () => {
+        if (fallbackInterval) return;
+        setConnectionMode("fallback");
+        fallbackInterval = window.setInterval(() => {
+            setSample(makeSample());
+        }, 100);
+    };
+
+    const connectTelemetry = () => {
+        setConnectionMode("connecting");
+        try {
+            ws = new WebSocket(telemetryWsUrl);
+        } catch {
+            startFallback();
+            reconnectTimeout = window.setTimeout(connectTelemetry, 2000);
+            return;
+        }
+
+        ws.onopen = () => {
+            stopFallback();
+            setConnectionMode("live");
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const incoming = JSON.parse(event.data) as AtmosphericSample;
+                if (typeof incoming?.ts === "number") {
+                    setSample(incoming);
+                }
+            } catch {
+                // Ignore malformed packets and keep the current sample.
+            }
+        };
+
+        ws.onerror = () => {
+            ws?.close();
+        };
+
+        ws.onclose = () => {
+            startFallback();
+            reconnectTimeout = window.setTimeout(connectTelemetry, 2000);
+        };
+    };
+
+    startFallback();
+    connectTelemetry();
+
+    onCleanup(() => {
+        stopFallback();
+        if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
+        ws?.close();
+    });
 
     const timestampLabel = () => {
         const value = sample().ts;
         return new Date(value).toLocaleTimeString();
     };
 
+    const connectionBadgeClass = () => {
+        if (connectionMode() === "live") return "badge badge-success badge-outline";
+        if (connectionMode() === "fallback") return "badge badge-warning badge-outline";
+        return "badge badge-info badge-outline";
+    };
+
+    const connectionLabel = () => {
+        if (connectionMode() === "live") return "Live Backend";
+        if (connectionMode() === "fallback") return "Fallback Sim";
+        return "Connecting...";
+    };
+
     return (
         <div class="space-y-6">
-            <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
                 <h1 class="text-2xl font-semibold">Dashboard</h1>
+                <div class={connectionBadgeClass()}>{connectionLabel()}</div>
             </div>
 
             <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -130,8 +202,8 @@ const Dashboard: Component = () => {
                     {/* IL RAZZO (Largo fisso 112px o 128px, ma si stira in altezza) */}
                     <AltitudeTracker
                         currentAltitude={sample().alt}
-                        targetAltitude={1200}
-                        maxAltitude={1200}
+                        targetAltitude={3000}
+                        maxAltitude={4000}
                         class="w-full sm:w-28 shrink-0 h-[350px] sm:h-auto"
                     />
 

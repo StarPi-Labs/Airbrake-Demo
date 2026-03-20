@@ -1,0 +1,54 @@
+# ------------------------------
+# OS / editor noise
+# ------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ------------------------------
+# Logs
+# ------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------
+# Environment / secrets
+# ------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------
+# Node / frontend
+# ------------------------------
+node_modules/
+.npm/
+.pnpm-store/
+dist/
+build/
+coverage/
+
+# Vite cache
+.vite/
+
+# ------------------------------
+# Python / backend
+# ------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Keep lockfiles tracked when intentionally present.
+# (No lockfile patterns ignored on purpose.)
