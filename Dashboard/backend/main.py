@@ -178,7 +178,6 @@ class TelemetryGenerator:
             self._serial_port = port
             self._serial_failure_count = 0
             self._serial_reconnect_interval_ms = 2000
-            logger.info("Serial connected on %s @ %s baud", port, self._serial_baudrate)
         except Exception as exc:
             self._serial_failure_count += 1
             # Back off retries to avoid flooding logs when a port is busy/unavailable.
@@ -203,7 +202,6 @@ class TelemetryGenerator:
                 value = self._extract_airbrake_value(line)
                 if value is None:
                     continue
-                logger.info("Serial command received: raw='%s' parsed=%s", line, value)
                 self.set_airbrake_command(value)
                 self._serial_last_value_ms = now_ms
         except Exception as exc:
@@ -215,7 +213,6 @@ class TelemetryGenerator:
         clamped = int(clamp(raw_value, 0, 4096))
         self._airbrake_command_raw = clamped
         self._airbrake_command_norm = clamped / 4096.0
-        logger.info("Airbrake command accepted: source=serial raw=%s pct=%.1f", clamped, self._airbrake_command_norm * 100.0)
         return {
             "accepted": True,
             "source": "serial",
