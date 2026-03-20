@@ -60,26 +60,33 @@ VITE_TELEMETRY_WS_URL=ws://localhost:8000/ws/telemetry npm run dev
 
 If the socket is unavailable, the dashboard automatically falls back to local simulated telemetry.
 
-### External Airbrake Control (0 to 4096)
+### Airbrake Control (Serial First + Keyboard Fallback)
 
-The simulator airbrake is externally commanded with an integer value in the range `0..4096`.
+The backend now prefers live serial input for airbrake command values (`0..4096`).
 
-Set command value:
+- If a USB serial device is available, incoming values drive the airbrake command.
+- If serial is unavailable (or stale), keyboard fallback is enabled from the dashboard UI with `Arrow Up` / `Arrow Down`.
+- The dashboard shows both command and applied airbrake percentages.
+
+Optional serial environment variables:
+
+```bash
+AIRBRAKE_SERIAL_PORT=COM3
+AIRBRAKE_SERIAL_BAUDRATE=115200
+```
+
+Manual fallback API (used by keyboard controls):
 
 ```bash
 curl -X PUT http://localhost:8000/control/airbrake/2048
-```
-
-Read current command/applied state:
-
-```bash
 curl http://localhost:8000/control/airbrake
 ```
 
 Notes:
 - `airbrakeCommandRaw` is the exact command value (`0..4096`).
-- `airbrakeCommandNorm` is normalized command (`0..1`).
-- `airbrakeAppliedNorm` is the simulated applied opening (`0..1`) with actuator lag.
+- `airbrakeCommandNorm` and `airbrakeCommandPct` are the normalized/percent command values.
+- `airbrakeAppliedNorm` and `airbrakeAppliedPct` are the simulated actuator-applied values.
+- `controlMode` is either `serial` or `keyboard`.
 
 ### `npm run build`
 

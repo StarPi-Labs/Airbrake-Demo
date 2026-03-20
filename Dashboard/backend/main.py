@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import math
+import os
 import random
+import re
 import time
-from typing import Dict
+from typing import Any, Dict, Literal
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+
+try:
+    serial = importlib.import_module("serial")
+    list_ports = importlib.import_module("serial.tools.list_ports")
+
+    SERIAL_AVAILABLE = True
+except ImportError:
+    serial = None
+    list_ports = None
+    SERIAL_AVAILABLE = False
 
 app = FastAPI(title="Telemetry Test Backend", version="0.1.0")
 
@@ -23,6 +36,17 @@ app.add_middleware(
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def detect_usb_port() -> str | None:
+    if not SERIAL_AVAILABLE or list_ports is None:
+        return None
+    ports = list_ports.comports()
+    for port in ports:
+        descriptor = f"{port.description} {port.hwid}".lower()
+        if "usb" in descriptor:
+            return port.device
+    return ports[0].device if ports else None
 
 
 class TelemetryGenerator:
@@ -52,6 +76,17 @@ class TelemetryGenerator:
         self._airbrake = 0.0
         self._airbrake_command_raw = 0
         self._airbrake_command_norm = 0.0
+        self._control_mode: Literal["serial", "keyboard"] = "keyboard"
+
+        # Serial command source configuration.
+        self._serial_baudrate = int(os.getenv("AIRBRAKE_SERIAL_BAUDRATE", "115200"))
+        self._serial_port_override = os.getenv("AIRBRAKE_SERIAL_PORT")
+        self._serial_port: str | None = None
+        self._serial_connection: Any | None = None
+        self._serial_last_connect_attempt_ms = 0
+        self._serial_reconnect_interval_ms = 2000
+        self._serial_last_value_ms = 0
+        self._serial_stale_timeout_s = 1.5
 
         # Attitude and position state
         self._roll = 0.0
@@ -87,20 +122,117 @@ class TelemetryGenerator:
     def _smooth(current: float, target: float, alpha: float) -> float:
         return current + alpha * (target - current)
 
-    def set_airbrake_command(self, raw_value: int) -> Dict[str, float | int]:
+    def _is_serial_fresh(self, now_ms: int) -> bool:
+        if self._serial_connection is None:
+            return False
+        return (now_ms - self._serial_last_value_ms) <= int(self._serial_stale_timeout_s * 1000)
+
+    def _refresh_control_mode(self, now_ms: int) -> None:
+        self._control_mode = "serial" if self._is_serial_fresh(now_ms) else "keyboard"
+
+    @staticmethod
+    def _extract_airbrake_value(raw_line: str) -> int | None:
+        # Accept either a plain integer or packets like "airbrake: 1234".
+        match = re.search(r"\d+", raw_line)
+        if not match:
+            return None
+        try:
+            return int(match.group(0))
+        except ValueError:
+            return None
+
+    def _close_serial(self) -> None:
+        if self._serial_connection is None:
+            return
+        try:
+            self._serial_connection.close()
+        finally:
+            self._serial_connection = None
+            self._serial_port = None
+
+    def _connect_serial_if_needed(self, now_ms: int) -> None:
+        if not SERIAL_AVAILABLE or self._serial_connection is not None:
+            return
+        if (now_ms - self._serial_last_connect_attempt_ms) < self._serial_reconnect_interval_ms:
+            return
+
+        self._serial_last_connect_attempt_ms = now_ms
+        port = self._serial_port_override or detect_usb_port()
+        if not port:
+            return
+
+        try:
+            self._serial_connection = serial.Serial(
+                port=port,
+                baudrate=self._serial_baudrate,
+                timeout=0.02,
+            )
+            self._serial_port = port
+        except Exception:
+            self._close_serial()
+
+    def _poll_serial_command(self, now_ms: int) -> None:
+        self._connect_serial_if_needed(now_ms)
+        if self._serial_connection is None:
+            self._refresh_control_mode(now_ms)
+            return
+
+        try:
+            while self._serial_connection.in_waiting > 0:
+                line = self._serial_connection.readline().decode("utf-8", errors="replace").strip()
+                value = self._extract_airbrake_value(line)
+                if value is None:
+                    continue
+                self.set_airbrake_command(value, source="serial", now_ms=now_ms)
+                self._serial_last_value_ms = now_ms
+        except Exception:
+            self._close_serial()
+
+        self._refresh_control_mode(now_ms)
+
+    def set_airbrake_command(
+        self,
+        raw_value: int,
+        source: Literal["serial", "keyboard"] = "keyboard",
+        now_ms: int | None = None,
+    ) -> Dict[str, float | int | bool | str]:
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        self._refresh_control_mode(now_ms)
+
+        if source == "keyboard" and self._control_mode == "serial":
+            return {
+                "accepted": False,
+                "message": "Serial control is active. Keyboard fallback is disabled.",
+                **self.get_airbrake_state(),
+            }
+
         clamped = int(clamp(raw_value, 0, 4096))
         self._airbrake_command_raw = clamped
         self._airbrake_command_norm = clamped / 4096.0
         return {
+            "accepted": True,
+            "source": source,
             "airbrakeCommandRaw": self._airbrake_command_raw,
             "airbrakeCommandNorm": self._airbrake_command_norm,
+            "airbrakeCommandPct": self._airbrake_command_norm * 100.0,
+            "controlMode": self._control_mode,
+            "serialConnected": self._serial_connection is not None,
+            "serialPort": self._serial_port or "",
         }
 
-    def get_airbrake_state(self) -> Dict[str, float | int]:
+    def get_airbrake_state(self) -> Dict[str, float | int | bool | str]:
+        now_ms = int(time.time() * 1000)
+        self._refresh_control_mode(now_ms)
         return {
             "airbrakeCommandRaw": self._airbrake_command_raw,
             "airbrakeCommandNorm": self._airbrake_command_norm,
+            "airbrakeCommandPct": self._airbrake_command_norm * 100.0,
             "airbrakeAppliedNorm": self._airbrake,
+            "airbrakeAppliedPct": self._airbrake * 100.0,
+            "controlMode": self._control_mode,
+            "serialConnected": self._serial_connection is not None,
+            "serialPort": self._serial_port or "",
         }
 
     def _reset_flight(self) -> None:
@@ -181,10 +313,12 @@ class TelemetryGenerator:
             if self._post_flight_hold_s >= 2.0:
                 self._reset_flight()
 
-    def next_sample(self) -> Dict[str, float | int | bool]:
+    def next_sample(self) -> Dict[str, float | int | bool | str]:
         now = int(time.time() * 1000)
         dt_s = clamp((now - self._last_ts) / 1000.0, 0.02, 0.2)
         self._last_ts = now
+
+        self._poll_serial_command(now)
 
         self._update_flight(dt_s)
 
@@ -246,6 +380,11 @@ class TelemetryGenerator:
             "accelZ": self._vertical_accel / 9.81,
             "airbrakeCmd": self._airbrake_command_raw,
             "airbrake": self._airbrake,
+            "airbrakeCmdPct": self._airbrake_command_norm * 100.0,
+            "airbrakePct": self._airbrake * 100.0,
+            "controlMode": self._control_mode,
+            "serialConnected": self._serial_connection is not None,
+            "serialPort": self._serial_port or "",
             "massTotalKg": self._current_total_mass(),
             "massMotorKg": self._current_motor_mass(),
         }
@@ -262,12 +401,12 @@ telemetry_generator = TelemetryGenerator()
 
 
 @app.put("/control/airbrake/{value}")
-async def set_airbrake(value: int) -> Dict[str, float | int]:
-    return telemetry_generator.set_airbrake_command(value)
+async def set_airbrake(value: int) -> Dict[str, float | int | bool | str]:
+    return telemetry_generator.set_airbrake_command(value, source="keyboard")
 
 
 @app.get("/control/airbrake")
-async def get_airbrake() -> Dict[str, float | int]:
+async def get_airbrake() -> Dict[str, float | int | bool | str]:
     return telemetry_generator.get_airbrake_state()
 
 

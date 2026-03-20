@@ -8,13 +8,17 @@ import AltitudeGraphCard from "../components/AltitudeGraphCard";
 import VideoPlayer from "../components/VideoPlayer";
 import AccellerationGraphCard from "../components/AccellerationGraphCard";
 import AltitudeTracker from "../components/AltitudeTracker";
+import MetricStat from "../components/MetricStat";
+import TelemetryCard from "../components/TelemetryCard";
 
 const Dashboard: Component = () => {
     const telemetryWsUrl = import.meta.env.VITE_TELEMETRY_WS_URL ?? "ws://localhost:8000/ws/telemetry";
+    const telemetryApiUrl = import.meta.env.VITE_TELEMETRY_API_URL ?? "http://localhost:8000";
     const [connectionMode, setConnectionMode] = createSignal<"connecting" | "live" | "fallback">("connecting");
 
     const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
     const randomBool = (trueChance = 0.9) => Math.random() < trueChance;
+    const clampValue = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
     let testAlt = 0;
     let altDirection = 1; // 1 sale, -1 scende
@@ -54,6 +58,13 @@ const Dashboard: Component = () => {
             accelX: randomInRange(-1, 1),
             accelY: randomInRange(-1, 1),
             accelZ: randomInRange(-1, 1),
+            airbrakeCmd: 0,
+            airbrake: 0,
+            airbrakeCmdPct: 0,
+            airbrakePct: 0,
+            controlMode: "keyboard",
+            serialConnected: false,
+            serialPort: "",
         };
     };
 
@@ -61,6 +72,15 @@ const Dashboard: Component = () => {
     let ws: WebSocket | undefined;
     let reconnectTimeout: number | undefined;
     let fallbackInterval: number | undefined;
+
+    const sendAirbrakeCommand = async (rawCommand: number) => {
+        const value = clampValue(Math.round(rawCommand), 0, 4096);
+        try {
+            await fetch(`${telemetryApiUrl}/control/airbrake/${value}`, { method: "PUT" });
+        } catch {
+            // Keep telemetry running even if command endpoint is temporarily unavailable.
+        }
+    };
 
     const stopFallback = () => {
         if (!fallbackInterval) return;
@@ -115,10 +135,22 @@ const Dashboard: Component = () => {
     startFallback();
     connectTelemetry();
 
+    const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        event.preventDefault();
+        const step = 128;
+        const delta = event.key === "ArrowUp" ? step : -step;
+        const nextCommand = clampValue(sample().airbrakeCmd + delta, 0, 4096);
+        void sendAirbrakeCommand(nextCommand);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
     onCleanup(() => {
         stopFallback();
         if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
         ws?.close();
+        window.removeEventListener("keydown", onKeyDown);
     });
 
     const timestampLabel = () => {
@@ -138,12 +170,45 @@ const Dashboard: Component = () => {
         return "Connecting...";
     };
 
+    const controlBadgeClass = () => {
+        if (sample().controlMode === "serial") return "badge badge-success badge-outline";
+        return "badge badge-info badge-outline";
+    };
+
+    const controlLabel = () => {
+        if (sample().controlMode === "serial") {
+            return sample().serialPort ? `Serial (${sample().serialPort})` : "Serial";
+        }
+        return "Keyboard Fallback";
+    };
+
     return (
         <div class="space-y-6">
             <div class="flex items-center justify-between gap-3 flex-wrap">
                 <h1 class="text-2xl font-semibold">Dashboard</h1>
                 <div class={connectionBadgeClass()}>{connectionLabel()}</div>
             </div>
+
+            <TelemetryCard
+                title="Airbrake Control"
+                subtitle="Arrow Up / Arrow Down adjust command when serial is not driving."
+                badge={controlLabel()}
+                class="w-full"
+            >
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <MetricStat label="Applied" value={sample().airbrakePct} precision={1} unit="%" />
+                    <MetricStat label="Command" value={sample().airbrakeCmdPct} precision={1} unit="%" />
+                    <MetricStat
+                        label="Raw Command"
+                        value={sample().airbrakeCmd}
+                        hint={sample().controlMode === "serial" ? "Input source: serial" : "Input source: keyboard"}
+                    />
+                </div>
+                <div class="flex items-center justify-between text-sm text-base-content/70">
+                    <span>Mode: <span class={controlBadgeClass()}>{controlLabel()}</span></span>
+                    <span>Range: 0 - 4096</span>
+                </div>
+            </TelemetryCard>
 
             <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
                 <AttitudeCard
