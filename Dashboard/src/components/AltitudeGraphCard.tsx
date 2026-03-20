@@ -10,6 +10,7 @@ const AltitudeGraphCard: Component<AltitudeGraphCardProps> = (props) => {
                 title="Altitude"
                 subtitle="Real-time m"
                 newPoint={props.time !== undefined && props.altitude !== undefined ? { time: props.time, altitude: props.altitude } : undefined}
+                resetKey={props.resetKey}
                 maxPoints={100}
                 xKey="time"
                 class="w-full"

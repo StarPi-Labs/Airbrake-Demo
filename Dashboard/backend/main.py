@@ -116,6 +116,9 @@ class TelemetryGenerator:
         self._accel_y = 0.0
 
         self._post_flight_hold_s = 0.0
+        self._goal_altitude_m = 3000.0
+        self._flight_state = "ready"
+        self._run_id = 1
 
     def _current_motor_mass(self) -> float:
         burn_elapsed = self._flight_t - self._launch_idle_s
@@ -243,6 +246,7 @@ class TelemetryGenerator:
         self._hvel = 0.0
         self._vertical_accel = 0.0
         self._airbrake = self._airbrake_command_norm
+        self._flight_state = "ready"
         self._roll = random.uniform(-2.0, 2.0)
         self._pitch = random.uniform(-2.0, 2.0)
         self._yaw = random.uniform(0.0, 360.0)
@@ -255,7 +259,24 @@ class TelemetryGenerator:
         self._accel_y = 0.0
         self._post_flight_hold_s = 0.0
 
+    def restart_flight(self) -> Dict[str, float | int | bool | str]:
+        self._run_id += 1
+        self._reset_flight()
+        return {
+            "accepted": True,
+            "runId": self._run_id,
+            "flightState": self._flight_state,
+            "goalAltitudeM": self._goal_altitude_m,
+        }
+
     def _update_flight(self, dt_s: float) -> None:
+        if self._flight_state == "complete":
+            # Hold final state until explicit restart request.
+            self._vvel = 0.0
+            self._vertical_accel = 0.0
+            self._hvel = self._smooth(self._hvel, 0.0, 0.10)
+            return
+
         self._flight_t += dt_s
 
         # Keep rocket on launch pad until launch delay expires.
@@ -265,7 +286,10 @@ class TelemetryGenerator:
             self._vvel = 0.0
             self._alt = 0.0
             self._hvel = self._smooth(self._hvel, 0.0, 0.20)
+            self._flight_state = "ready"
             return
+
+        self._flight_state = "ascending"
 
         # Launch motor profile: strong at ignition, then taper.
         burn_elapsed = self._flight_t - self._launch_idle_s
@@ -299,20 +323,18 @@ class TelemetryGenerator:
         self._vvel += self._vertical_accel * dt_s
         self._alt = max(0.0, self._alt + self._vvel * dt_s)
 
+        if self._vvel <= 0.0 and self._flight_t > self._launch_idle_s:
+            self._vvel = 0.0
+            self._vertical_accel = 0.0
+            self._flight_state = "complete"
+            return
+
         # Horizontal speed: mild wind drift, damped over time.
         wind_target = 7.0 + 4.0 * math.sin(self._flight_t / 8.0)
         if thrust_accel > 0:
             wind_target += 2.0
         self._hvel = self._smooth(self._hvel, wind_target + random.uniform(-0.8, 0.8), 0.08)
         self._hvel = clamp(self._hvel, 0.0, 80.0)
-
-        # End-of-flight handling and automatic relaunch after short hold.
-        if self._alt <= 0.0 and self._flight_t > (self._launch_idle_s + self._burn_time_s + 8.0):
-            self._vvel = 0.0
-            self._vertical_accel = 0.0
-            self._post_flight_hold_s += dt_s
-            if self._post_flight_hold_s >= 2.0:
-                self._reset_flight()
 
     def next_sample(self) -> Dict[str, float | int | bool | str]:
         now = int(time.time() * 1000)
@@ -362,6 +384,8 @@ class TelemetryGenerator:
 
         sample = {
             "ts": now,
+            "runId": self._run_id,
+            "flightState": self._flight_state,
             "roll": self._roll,
             "pitch": self._pitch,
             "yaw": self._yaw,
@@ -380,6 +404,8 @@ class TelemetryGenerator:
             "accelZ": self._vertical_accel,
             "airbrakePct": self._airbrake * 100.0,
             "controlMode": self._control_mode,
+            "goalAltitudeM": self._goal_altitude_m,
+            "distanceToGoalM": abs(self._goal_altitude_m - self._alt),
             "massTotalKg": self._current_total_mass(),
             "massMotorKg": self._current_motor_mass(),
         }
@@ -399,6 +425,12 @@ telemetry_generator = TelemetryGenerator()
 async def get_airbrake() -> Dict[str, float | int | bool | str]:
     logger.info("State endpoint hit: GET /control/airbrake")
     return telemetry_generator.get_airbrake_state()
+
+
+@app.post("/flight/restart")
+async def restart_flight() -> Dict[str, float | int | bool | str]:
+    logger.info("Flight restart requested")
+    return telemetry_generator.restart_flight()
 
 
 @app.websocket("/ws/telemetry")

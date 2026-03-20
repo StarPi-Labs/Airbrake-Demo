@@ -19,6 +19,11 @@ const GraphCard: Component<GraphCardProps> = (props) => {
     let buffer = new CircularBuffer<Record<string, number | string>>(props.maxPoints || 100);
     const [tick, setTick] = createSignal(0);
 
+    createEffect(on(() => props.resetKey, () => {
+        buffer = new CircularBuffer<Record<string, number | string>>(props.maxPoints || 100);
+        setTick(t => t + 1);
+    }, { defer: true }));
+
     createEffect(on(() => props.newPoint, (pt) => {
         if (!pt) return;
         // se per qualche motivo cambia la capacità del buffer

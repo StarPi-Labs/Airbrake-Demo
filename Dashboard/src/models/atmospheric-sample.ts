@@ -1,6 +1,8 @@
 import { InertialSample } from "./inertial-sample"
 
 export interface AtmosphericSample extends InertialSample {
+    runId: number
+    flightState: "ready" | "ascending" | "complete"
     alt: number
     vvel: number
     hvel: number
@@ -15,4 +17,6 @@ export interface AtmosphericSample extends InertialSample {
     accelZ: number
     airbrakePct: number
     controlMode: "serial"
+    goalAltitudeM: number
+    distanceToGoalM: number
 }

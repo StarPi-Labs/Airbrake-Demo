@@ -12,6 +12,7 @@ const VelocityGraphCard: Component<VelocityGraphCardProps> = (props) => {
                 title="Velocities"
                 subtitle="Real-time m/s"
                 newPoint={props.time !== undefined && props.verticalVelocity !== undefined && props.horizontalVelocity !== undefined ? { time: props.time, verticalVelocity: props.verticalVelocity, horizontalVelocity: props.horizontalVelocity } : undefined}
+                resetKey={props.resetKey}
                 maxPoints={100}
                 xKey="time"
                 class="w-full"

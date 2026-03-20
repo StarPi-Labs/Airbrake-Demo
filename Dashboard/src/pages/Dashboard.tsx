@@ -11,9 +11,12 @@ import AltitudeTracker from "../components/AltitudeTracker";
 
 const Dashboard: Component = () => {
     const telemetryWsUrl = import.meta.env.VITE_TELEMETRY_WS_URL ?? "ws://localhost:8000/ws/telemetry";
+    const telemetryApiUrl = import.meta.env.VITE_TELEMETRY_API_URL ?? "http://localhost:8000";
     const [connectionMode, setConnectionMode] = createSignal<"connecting" | "live" | "disconnected">("connecting");
     const [sample, setSample] = createSignal<AtmosphericSample>({
         ts: Date.now(),
+        runId: 1,
+        flightState: "ready",
         roll: 0,
         pitch: 0,
         yaw: 0,
@@ -32,9 +35,22 @@ const Dashboard: Component = () => {
         accelZ: 0,
         airbrakePct: 0,
         controlMode: "serial",
+        goalAltitudeM: 3000,
+        distanceToGoalM: 3000,
     });
+    const [isRestarting, setIsRestarting] = createSignal(false);
     let ws: WebSocket | undefined;
     let reconnectTimeout: number | undefined;
+
+    const restartFlight = async () => {
+        if (isRestarting()) return;
+        setIsRestarting(true);
+        try {
+            await fetch(`${telemetryApiUrl}/flight/restart`, { method: "POST" });
+        } finally {
+            setIsRestarting(false);
+        }
+    };
 
     const connectTelemetry = () => {
         setConnectionMode("connecting");
@@ -95,14 +111,31 @@ const Dashboard: Component = () => {
         return "Connecting...";
     };
 
+    const flightStateLabel = () => {
+        if (sample().flightState === "complete") return "Apogee Reached";
+        if (sample().flightState === "ascending") return "Ascending";
+        return "Ready";
+    };
+
     return (
         <div class="space-y-6">
             <div class="flex items-center justify-between gap-3 flex-wrap">
                 <h1 class="text-2xl font-semibold">Dashboard</h1>
                 <div class="flex items-center gap-2 flex-wrap">
                     <div class={connectionBadgeClass()}>{connectionLabel()}</div>
+                    <div class="badge badge-secondary badge-outline">{flightStateLabel()}</div>
                     <div class="badge badge-outline">Airbrake {sample().airbrakePct.toFixed(1)}%</div>
+                    <button class="btn btn-sm btn-primary" onClick={() => void restartFlight()} disabled={isRestarting()}>
+                        {isRestarting() ? "Restarting..." : "Restart Flight"}
+                    </button>
                 </div>
+            </div>
+
+            <div class="alert alert-info py-2">
+                <span>
+                    Goal 3000m: {sample().distanceToGoalM.toFixed(1)}m away
+                    {sample().flightState === "complete" ? " (flight stopped at apogee)" : ""}
+                </span>
             </div>
 
             <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -149,12 +182,14 @@ const Dashboard: Component = () => {
                             time={sample().ts}
                             verticalVelocity={sample().vvel}
                             horizontalVelocity={sample().hvel}
+                            resetKey={sample().runId}
                             class="w-full"
                         />
 
                         <AltitudeGraphCard
                             time={sample().ts}
                             altitude={sample().alt}
+                            resetKey={sample().runId}
                             class="w-full"
                         />
                     </div>
@@ -176,6 +211,7 @@ const Dashboard: Component = () => {
                     accelX={sample().accelX}
                     accelY={sample().accelY}
                     accelZ={sample().accelZ}
+                    resetKey={sample().runId}
                     class="w-full"
                 />
             </div>

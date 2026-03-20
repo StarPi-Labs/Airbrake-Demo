@@ -13,6 +13,7 @@ const AccellerationGraphCard: Component<AccellerationGraphCardProps> = (props) =
                 title="Accelleration"
                 subtitle="Real-time m/s^2"
                 newPoint={props.time !== undefined && props.accelX !== undefined && props.accelY !== undefined && props.accelZ !== undefined ? { time: props.time, accelX: props.accelX, accelY: props.accelY, accelZ: props.accelZ } : undefined}
+                resetKey={props.resetKey}
                 maxPoints={100}
                 xKey="time"
                 class="w-full"
