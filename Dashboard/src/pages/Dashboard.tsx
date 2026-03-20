@@ -11,104 +11,42 @@ import AltitudeTracker from "../components/AltitudeTracker";
 
 const Dashboard: Component = () => {
     const telemetryWsUrl = import.meta.env.VITE_TELEMETRY_WS_URL ?? "ws://localhost:8000/ws/telemetry";
-    const telemetryApiUrl = import.meta.env.VITE_TELEMETRY_API_URL ?? "http://localhost:8000";
-    const [connectionMode, setConnectionMode] = createSignal<"connecting" | "live" | "fallback">("connecting");
-
-    const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
-    const randomBool = (trueChance = 0.9) => Math.random() < trueChance;
-    const clampValue = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
-
-    let testAlt = 0;
-    let altDirection = 1; // 1 sale, -1 scende
-
-    const makeSample = (): AtmosphericSample => {
-
-        // Semplice incremento/decremento
-        testAlt += 15 * altDirection;
-
-        // Rimbalza tra 0 e 1200
-        if (testAlt >= 1200) {
-            testAlt = 1200;
-            altDirection = -1;
-        } else if (testAlt <= 0) {
-            testAlt = 0;
-            altDirection = 1;
-        }
-
-        return {
-            ts: Date.now(),
-            roll: randomInRange(-45, 45),
-            pitch: randomInRange(-45, 45),
-            yaw: randomInRange(0, 360),
-            status: randomBool(0.95),
-
-            alt: testAlt, // Usiamo il nostro contatore che va su e giù
-
-            // Tutto il resto è tornato puramente randomico come lo avevi scritto tu:
-            vvel: randomInRange(-40, 40),
-            hvel: randomInRange(0, 80),
-            lat: randomInRange(43.30, 43.45),
-            long: randomInRange(10.05, 10.20),
-            gps: randomBool(0.85),
-            temp: randomInRange(-5, 35),
-            pres: randomInRange(950, 1030),
-            rh: randomInRange(10, 95),
-            accelX: randomInRange(-1, 1),
-            accelY: randomInRange(-1, 1),
-            accelZ: randomInRange(-1, 1),
-            airbrakePct: 0,
-            controlMode: "keyboard",
-        };
-    };
-
-    const [sample, setSample] = createSignal<AtmosphericSample>(makeSample());
-    const [keyboardCommandRaw, setKeyboardCommandRaw] = createSignal(0);
+    const [connectionMode, setConnectionMode] = createSignal<"connecting" | "live" | "disconnected">("connecting");
+    const [sample, setSample] = createSignal<AtmosphericSample>({
+        ts: Date.now(),
+        roll: 0,
+        pitch: 0,
+        yaw: 0,
+        status: false,
+        alt: 0,
+        vvel: 0,
+        hvel: 0,
+        lat: 0,
+        long: 0,
+        gps: false,
+        temp: 0,
+        pres: 0,
+        rh: 0,
+        accelX: 0,
+        accelY: 0,
+        accelZ: 0,
+        airbrakePct: 0,
+        controlMode: "serial",
+    });
     let ws: WebSocket | undefined;
     let reconnectTimeout: number | undefined;
-    let fallbackInterval: number | undefined;
-
-    const sendAirbrakeCommand = async (rawCommand: number) => {
-        const value = clampValue(Math.round(rawCommand), 0, 4096);
-        setKeyboardCommandRaw(value);
-        try {
-            const response = await fetch(`${telemetryApiUrl}/control/airbrake/${value}`, { method: "PUT" });
-            if (!response.ok) return;
-            const payload = await response.json() as { accepted?: boolean; airbrakeCommandRaw?: number };
-            if (payload.accepted === false) return;
-            if (typeof payload.airbrakeCommandRaw === "number") {
-                setKeyboardCommandRaw(payload.airbrakeCommandRaw);
-            }
-        } catch {
-            // Keep telemetry running even if command endpoint is temporarily unavailable.
-        }
-    };
-
-    const stopFallback = () => {
-        if (!fallbackInterval) return;
-        window.clearInterval(fallbackInterval);
-        fallbackInterval = undefined;
-    };
-
-    const startFallback = () => {
-        if (fallbackInterval) return;
-        setConnectionMode("fallback");
-        fallbackInterval = window.setInterval(() => {
-            setSample(makeSample());
-        }, 100);
-    };
 
     const connectTelemetry = () => {
         setConnectionMode("connecting");
         try {
             ws = new WebSocket(telemetryWsUrl);
         } catch {
-            startFallback();
+            setConnectionMode("disconnected");
             reconnectTimeout = window.setTimeout(connectTelemetry, 2000);
             return;
         }
 
         ws.onopen = () => {
-            stopFallback();
             setConnectionMode("live");
         };
 
@@ -128,30 +66,16 @@ const Dashboard: Component = () => {
         };
 
         ws.onclose = () => {
-            startFallback();
+            setConnectionMode("disconnected");
             reconnectTimeout = window.setTimeout(connectTelemetry, 2000);
         };
     };
 
-    startFallback();
     connectTelemetry();
 
-    const onKeyDown = (event: KeyboardEvent) => {
-        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-        event.preventDefault();
-        const step = 128;
-        const delta = event.key === "ArrowUp" ? step : -step;
-        const nextCommand = clampValue(keyboardCommandRaw() + delta, 0, 4096);
-        void sendAirbrakeCommand(nextCommand);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-
     onCleanup(() => {
-        stopFallback();
         if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
         ws?.close();
-        window.removeEventListener("keydown", onKeyDown);
     });
 
     const timestampLabel = () => {
@@ -161,24 +85,14 @@ const Dashboard: Component = () => {
 
     const connectionBadgeClass = () => {
         if (connectionMode() === "live") return "badge badge-success badge-outline";
-        if (connectionMode() === "fallback") return "badge badge-warning badge-outline";
+        if (connectionMode() === "disconnected") return "badge badge-warning badge-outline";
         return "badge badge-info badge-outline";
     };
 
     const connectionLabel = () => {
         if (connectionMode() === "live") return "Live Backend";
-        if (connectionMode() === "fallback") return "Fallback Sim";
+        if (connectionMode() === "disconnected") return "Disconnected";
         return "Connecting...";
-    };
-
-    const controlBadgeClass = () => {
-        if (sample().controlMode === "serial") return "badge badge-success badge-outline";
-        return "badge badge-info badge-outline";
-    };
-
-    const controlLabel = () => {
-        if (sample().controlMode === "serial") return "Serial";
-        return "Keyboard Fallback";
     };
 
     return (
@@ -187,9 +101,7 @@ const Dashboard: Component = () => {
                 <h1 class="text-2xl font-semibold">Dashboard</h1>
                 <div class="flex items-center gap-2 flex-wrap">
                     <div class={connectionBadgeClass()}>{connectionLabel()}</div>
-                    <button type="button" class={controlBadgeClass()} title="Airbrake input mode">
-                        {controlLabel()}
-                    </button>
+                    <div class="badge badge-success badge-outline">Serial Only</div>
                     <div class="badge badge-outline">Airbrake {sample().airbrakePct.toFixed(1)}%</div>
                 </div>
             </div>

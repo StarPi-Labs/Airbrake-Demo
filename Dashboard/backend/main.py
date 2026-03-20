@@ -8,7 +8,7 @@ import os
 import random
 import re
 import time
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,7 @@ except ImportError:
 if SERIAL_AVAILABLE:
     logger.info("pyserial available: serial input enabled")
 else:
-    logger.warning("pyserial not installed: serial input disabled, keyboard fallback only")
+    logger.warning("pyserial not installed: serial input disabled")
 
 app = FastAPI(title="Telemetry Test Backend", version="0.1.0")
 
@@ -86,7 +86,7 @@ class TelemetryGenerator:
         self._airbrake = 0.0
         self._airbrake_command_raw = 0
         self._airbrake_command_norm = 0.0
-        self._control_mode: Literal["serial", "keyboard"] = "keyboard"
+        self._control_mode = "serial"
 
         # Serial command source configuration.
         self._serial_baudrate = int(os.getenv("AIRBRAKE_SERIAL_BAUDRATE", "115200"))
@@ -95,9 +95,9 @@ class TelemetryGenerator:
         self._serial_connection: Any | None = None
         self._serial_last_connect_attempt_ms = 0
         self._serial_reconnect_interval_ms = 2000
+        self._serial_failure_count = 0
         self._serial_last_value_ms = 0
         self._serial_stale_timeout_s = 1.5
-        self._last_reported_control_mode = self._control_mode
 
         # Attitude and position state
         self._roll = 0.0
@@ -138,13 +138,6 @@ class TelemetryGenerator:
             return False
         return (now_ms - self._serial_last_value_ms) <= int(self._serial_stale_timeout_s * 1000)
 
-    def _refresh_control_mode(self, now_ms: int) -> None:
-        next_mode: Literal["serial", "keyboard"] = "serial" if self._is_serial_fresh(now_ms) else "keyboard"
-        if next_mode != self._last_reported_control_mode:
-            logger.info("Control mode switched -> %s", next_mode)
-            self._last_reported_control_mode = next_mode
-        self._control_mode = next_mode
-
     @staticmethod
     def _extract_airbrake_value(raw_line: str) -> int | None:
         # Accept either a plain integer or packets like "airbrake: 1234".
@@ -183,15 +176,25 @@ class TelemetryGenerator:
                 timeout=0.02,
             )
             self._serial_port = port
+            self._serial_failure_count = 0
+            self._serial_reconnect_interval_ms = 2000
             logger.info("Serial connected on %s @ %s baud", port, self._serial_baudrate)
-        except Exception:
-            logger.exception("Serial connection failed on %s", port)
+        except Exception as exc:
+            self._serial_failure_count += 1
+            # Back off retries to avoid flooding logs when a port is busy/unavailable.
+            self._serial_reconnect_interval_ms = min(60_000, 2000 * (2 ** min(self._serial_failure_count, 5)))
+            logger.warning(
+                "Serial connection failed on %s (%s). Retry in %.1fs [attempt=%s]",
+                port,
+                exc,
+                self._serial_reconnect_interval_ms / 1000.0,
+                self._serial_failure_count,
+            )
             self._close_serial()
 
     def _poll_serial_command(self, now_ms: int) -> None:
         self._connect_serial_if_needed(now_ms)
         if self._serial_connection is None:
-            self._refresh_control_mode(now_ms)
             return
 
         try:
@@ -201,39 +204,21 @@ class TelemetryGenerator:
                 if value is None:
                     continue
                 logger.info("Serial command received: raw='%s' parsed=%s", line, value)
-                self.set_airbrake_command(value, source="serial", now_ms=now_ms)
+                self.set_airbrake_command(value)
                 self._serial_last_value_ms = now_ms
-        except Exception:
-            logger.exception("Serial polling failed, closing serial connection")
+        except Exception as exc:
+            logger.warning("Serial polling failed (%s), closing serial connection", exc)
             self._close_serial()
 
-        self._refresh_control_mode(now_ms)
-
-    def set_airbrake_command(
-        self,
-        raw_value: int,
-        source: Literal["serial", "keyboard"] = "keyboard",
-        now_ms: int | None = None,
-    ) -> Dict[str, float | int | bool | str]:
-        if now_ms is None:
-            now_ms = int(time.time() * 1000)
-        self._refresh_control_mode(now_ms)
-
-        if source == "keyboard" and self._control_mode == "serial":
-            logger.info("Keyboard command rejected while serial active: %s", raw_value)
-            return {
-                "accepted": False,
-                "message": "Serial control is active. Keyboard fallback is disabled.",
-                **self.get_airbrake_state(),
-            }
+    def set_airbrake_command(self, raw_value: int) -> Dict[str, float | int | bool | str]:
 
         clamped = int(clamp(raw_value, 0, 4096))
         self._airbrake_command_raw = clamped
         self._airbrake_command_norm = clamped / 4096.0
-        logger.info("Airbrake command accepted: source=%s raw=%s pct=%.1f", source, clamped, self._airbrake_command_norm * 100.0)
+        logger.info("Airbrake command accepted: source=serial raw=%s pct=%.1f", clamped, self._airbrake_command_norm * 100.0)
         return {
             "accepted": True,
-            "source": source,
+            "source": "serial",
             "airbrakeCommandRaw": self._airbrake_command_raw,
             "airbrakeCommandNorm": self._airbrake_command_norm,
             "airbrakeCommandPct": self._airbrake_command_norm * 100.0,
@@ -243,8 +228,6 @@ class TelemetryGenerator:
         }
 
     def get_airbrake_state(self) -> Dict[str, float | int | bool | str]:
-        now_ms = int(time.time() * 1000)
-        self._refresh_control_mode(now_ms)
         return {
             "airbrakeCommandRaw": self._airbrake_command_raw,
             "airbrakeCommandNorm": self._airbrake_command_norm,
@@ -413,12 +396,6 @@ async def health() -> Dict[str, str]:
 
 
 telemetry_generator = TelemetryGenerator()
-
-
-@app.put("/control/airbrake/{value}")
-async def set_airbrake(value: int) -> Dict[str, float | int | bool | str]:
-    logger.info("Keyboard endpoint hit: PUT /control/airbrake/%s", value)
-    return telemetry_generator.set_airbrake_command(value, source="keyboard")
 
 
 @app.get("/control/airbrake")

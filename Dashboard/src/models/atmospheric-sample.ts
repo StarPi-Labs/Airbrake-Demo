@@ -14,5 +14,5 @@ export interface AtmosphericSample extends InertialSample {
     accelY: number
     accelZ: number
     airbrakePct: number
-    controlMode: "serial" | "keyboard"
+    controlMode: "serial"
 }
