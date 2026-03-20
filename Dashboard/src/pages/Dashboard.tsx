@@ -117,6 +117,8 @@ const Dashboard: Component = () => {
         return "Ready";
     };
 
+    const graphTime = () => (sample().flightState === "complete" ? undefined : sample().ts);
+
     return (
         <div class="space-y-6">
             <div class="flex items-center justify-between gap-3 flex-wrap">
@@ -179,7 +181,7 @@ const Dashboard: Component = () => {
                     {/* SOTTO-COLONNA GRAFICI (flex-1 gli fa prendere tutto lo spazio rimasto) */}
                     <div class="flex flex-col gap-4 flex-1 w-full sm:w-0">
                         <VelocityGraphCard
-                            time={sample().ts}
+                            time={graphTime()}
                             verticalVelocity={sample().vvel}
                             horizontalVelocity={sample().hvel}
                             resetKey={sample().runId}
@@ -187,7 +189,7 @@ const Dashboard: Component = () => {
                         />
 
                         <AltitudeGraphCard
-                            time={sample().ts}
+                            time={graphTime()}
                             altitude={sample().alt}
                             resetKey={sample().runId}
                             class="w-full"
@@ -207,7 +209,7 @@ const Dashboard: Component = () => {
             </div>
             <div class="grid gap-4">
                 <AccellerationGraphCard
-                    time={sample().ts}
+                    time={graphTime()}
                     accelX={sample().accelX}
                     accelY={sample().accelY}
                     accelZ={sample().accelZ}
