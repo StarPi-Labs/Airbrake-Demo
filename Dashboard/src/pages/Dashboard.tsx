@@ -1,4 +1,4 @@
-import { Component, createSignal, onCleanup } from "solid-js";
+import { Component, createEffect, createSignal, onCleanup, Show, Switch, Match} from "solid-js";
 import AttitudeCard from "../components/AttitudeCard";
 import AtmosphereCard from "../components/AtmosphereCard";
 import NavigationCard from "../components/NavigationCard";
@@ -38,7 +38,21 @@ const Dashboard: Component = () => {
         goalAltitudeM: 3000,
         distanceToGoalM: 3000,
     });
+    const target = sample().goalAltitudeM;
+    const tollerance = 50;
+    const t_limit = target + tollerance;
+
+    
+
     const [isRestarting, setIsRestarting] = createSignal(false);
+    const [missionStatus, setMissionStatus] = createSignal<"ready" | "flying" | "success"| "overshoot" | "undershoot">("flying")
+
+    const CELEBRATION_VIDEO_SRC = "assets/video/vitcory.mp4";
+    const UNDERSHOOT_VIDEO_SRC = "assets/video/fail.mp4";
+    const OVERSHOOT_VIDEO_SRC = "assets/video/fail.mp4";
+
+    
+
     let ws: WebSocket | undefined;
     let reconnectTimeout: number | undefined;
 
@@ -117,7 +131,45 @@ const Dashboard: Component = () => {
         return "Ready";
     };
 
+    createEffect(() => {
+        const currentAlt = sample().alt;
+        const flightState = sample().flightState;
+        const currentState = missionStatus();
+
+        if (flightState === "ready" && currentState !== "ready") {
+            setMissionStatus("ready");
+            return; 
+        }
+
+        if (flightState === "ascending" && currentState === "ready") {
+            setMissionStatus("flying");
+        }
+
+        if (currentAlt > t_limit && currentState !== "overshoot") {
+            setMissionStatus("overshoot");
+        } 
+        else if (flightState === "complete" && currentState === "flying") {
+            if (currentAlt >= target && currentAlt <= t_limit) {setMissionStatus("success");} 
+            else if (currentAlt < target) {setMissionStatus("undershoot");}
+        }
+    });
+
     const graphTime = () => (sample().flightState === "complete" ? undefined : sample().ts);
+
+
+    const videoSources = () => {
+        const defaultCameras = [
+            { id: "cam1", label: "Front Camera", src: "assets/video/199582-910653711_medium.mp4" },
+            { id: "cam2", label: "Bottom Camera", src: "assets/video/854224-hd_1280_720_30fps.mp4" },
+            { id: "cam3", label: "Arm Camera", src: "assets/video/arm-test.mp4" }
+        ];
+
+        if (missionStatus() === "success") {return [{ id: "celebration", label: "🚀 TARGET RAGGIUNTO!", src: CELEBRATION_VIDEO_SRC }];}
+        if (missionStatus() === "overshoot") {return [{ id: "o_fail", label: "Missione Fallita", src: OVERSHOOT_VIDEO_SRC }];}
+        if (missionStatus() === "undershoot") {return [{ id: "u_fail", label: "Missione Fallita", src: UNDERSHOOT_VIDEO_SRC }];}
+
+        return defaultCameras;
+    };
 
     return (
         <div class="space-y-6">
@@ -163,22 +215,59 @@ const Dashboard: Component = () => {
                 />
             </div>
 
+             <Switch>
+                {/* 1. SUCCESS*/}
+                <Match when={missionStatus() === "success"}>
+                    <div class="alert alert-success shadow-lg mt-4 border-2 border-green-500 animate-bounce">
+                        <span class="text-3xl">🏆</span>
+                        <div>
+                            <h3 class="font-bold text-lg">Missione Compiuta!</h3>
+                            <div class="text-sm">
+                                Il volo è terminato a quota <strong>{sample().alt.toFixed(1)}m</strong>, 
+                                rimanendo nel range di tolleranza ({target}m - {t_limit}m).
+                            </div>
+                        </div>
+                    </div>
+                </Match>
+
+                {/* 2. OVERSHOOT*/}
+                <Match when={missionStatus() === "overshoot"}>
+                    <div class="alert alert-error shadow-lg mt-4 border-2 border-red-500 animate-pulse text-white">
+                        <span class="text-3xl">💥</span>
+                        <div>
+                            <h3 class="font-bold text-lg">Allarme Overshoot: Limite Superato!</h3>
+                            <div class="text-sm">
+                                Altitudine massima ({t_limit}m) violata. 
+                                Quota attuale: <strong>{sample().alt.toFixed(1)}m</strong>.
+                            </div>
+                        </div>
+                    </div>
+                </Match>
+
+                {/* 3. UNDERSHOOT:*/}
+                <Match when={missionStatus() === "undershoot"}>
+                    <div class="alert alert-warning shadow-lg mt-4 border-2 border-yellow-500">
+                        <span class="text-3xl">📉</span>
+                        <div>
+                            <h3 class="font-bold text-lg">Target Mancato: hai frenato troppo</h3>
+                            <div class="text-sm">
+                                Il velivolo ha raggiunto l'apogeo a <strong>{sample().alt.toFixed(1)}m</strong>. 
+                                Sono mancati {(target - sample().alt).toFixed(1)}m per raggiungere l'obiettivo.
+                            </div>
+                        </div>
+                    </div>
+                </Match>
+            </Switch>
+
             <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
 
                 <div class="lg:col-span-2 h-full">
-                    <VideoPlayer
-                        sources={[
-                            { id: "cam1", label: "Front Camera", src: "/video/199582-910653711_medium.mp4" },
-                            { id: "cam2", label: "Bottom Camera", src: "video/854224-hd_1280_720_30fps.mp4" },
-                            { id: "cam3", label: "Arm Camera", src: "/video/arm-test.mp4" }
-                        ]}
-                        objectFit="cover"
-                    />
+                    <VideoPlayer sources={videoSources()} objectFit="cover" />
                 </div>
 
                 <div class="flex flex-col sm:flex-row gap-4 lg:col-span-2">
-
-                    {/* SOTTO-COLONNA GRAFICI (flex-1 gli fa prendere tutto lo spazio rimasto) */}
+                    
+                    {/* SOTTO-COLONNA GRAFICI*/}
                     <div class="flex flex-col gap-4 flex-1 w-full sm:w-0">
                         <VelocityGraphCard
                             time={graphTime()}
@@ -196,14 +285,12 @@ const Dashboard: Component = () => {
                         />
                     </div>
 
-                    {/* IL RAZZO (Largo fisso 112px o 128px, ma si stira in altezza) */}
                     <AltitudeTracker
                         currentAltitude={sample().alt}
-                        targetAltitude={3000}
+                        targetAltitude={target}
                         maxAltitude={4000}
                         class="w-full sm:w-28 shrink-0 h-[350px] sm:h-auto"
                     />
-
                 </div>
 
             </div>
