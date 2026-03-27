@@ -216,7 +216,7 @@ const Dashboard: Component = () => {
             </div>
 
              <Switch>
-                {/* 1. SUCCESS*/}
+                {/*SUCCESS*/}
                 <Match when={missionStatus() === "success"}>
                     <div class="alert alert-success shadow-lg mt-4 border-2 border-green-500 animate-bounce">
                         <span class="text-3xl">🏆</span>
@@ -230,12 +230,12 @@ const Dashboard: Component = () => {
                     </div>
                 </Match>
 
-                {/* 2. OVERSHOOT*/}
+                {/*OVERSHOOT*/}
                 <Match when={missionStatus() === "overshoot"}>
                     <div class="alert alert-error shadow-lg mt-4 border-2 border-red-500 animate-pulse text-white">
                         <span class="text-3xl">💥</span>
                         <div>
-                            <h3 class="font-bold text-lg">Allarme Overshoot: Limite Superato!</h3>
+                            <h3 class="font-bold text-lg">Limite massimo superato! Non hai frenato abbastanza</h3>
                             <div class="text-sm">
                                 Altitudine massima ({t_limit}m) violata. 
                                 Quota attuale: <strong>{sample().alt.toFixed(1)}m</strong>.
@@ -244,12 +244,12 @@ const Dashboard: Component = () => {
                     </div>
                 </Match>
 
-                {/* 3. UNDERSHOOT:*/}
+                {/*UNDERSHOOT:*/}
                 <Match when={missionStatus() === "undershoot"}>
                     <div class="alert alert-warning shadow-lg mt-4 border-2 border-yellow-500">
                         <span class="text-3xl">📉</span>
                         <div>
-                            <h3 class="font-bold text-lg">Target Mancato: hai frenato troppo</h3>
+                            <h3 class="font-bold text-lg">Obiettivo non raggiunto! Hai frenato troppo</h3>
                             <div class="text-sm">
                                 Il velivolo ha raggiunto l'apogeo a <strong>{sample().alt.toFixed(1)}m</strong>. 
                                 Sono mancati {(target - sample().alt).toFixed(1)}m per raggiungere l'obiettivo.
