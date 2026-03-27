@@ -40,6 +40,7 @@ const Dashboard: Component = () => {
     });
     const target = sample().goalAltitudeM;
     const tollerance = 50;
+    const lowerLimit = target - tollerance;
     const t_limit = target + tollerance;
 
     
@@ -149,8 +150,8 @@ const Dashboard: Component = () => {
             setMissionStatus("overshoot");
         } 
         else if (flightState === "complete" && currentState === "flying") {
-            if (currentAlt >= target && currentAlt <= t_limit) {setMissionStatus("success");} 
-            else if (currentAlt < target) {setMissionStatus("undershoot");}
+            if (currentAlt >= lowerLimit && currentAlt <= t_limit) {setMissionStatus("success");} 
+            else if (currentAlt < lowerLimit) {setMissionStatus("undershoot");}
         }
     });
 
@@ -224,7 +225,7 @@ const Dashboard: Component = () => {
                             <h3 class="font-bold text-lg">Missione Compiuta!</h3>
                             <div class="text-sm">
                                 Il volo è terminato a quota <strong>{sample().alt.toFixed(1)}m</strong>, 
-                                rimanendo nel range di tolleranza ({target}m - {t_limit}m).
+                                rimanendo nel range di tolleranza ({lowerLimit}m - {t_limit}m).
                             </div>
                         </div>
                     </div>
