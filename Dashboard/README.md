@@ -100,4 +100,23 @@ Your app is ready to be deployed!
 
 You can deploy the `dist` folder to any static host provider (netlify, surge, now, etc.)
 
+## Project Architecture
+
+The system is divided into four main modules that handle data from the hardware level up to the user interface:
+
+* **`Embedded-Code`**: Contains the microcontroller/Arduino code responsible for hardware interactions, such as controlling and setting the servo motors.
+* **`game`**: Acts as the hardware-software interface. It includes a USB port listener to capture incoming serial signals from the hardware and a parser to decode the data.
+* **`backend`**: Contains the core server logic. The `main.py` script collects the parsed data, applies the rocket's kinematics model to calculate the flight trajectory, and streams the resulting telemetry data to the frontend.
+* **`Dashboard`**: The frontend application. It receives the live data via WebSockets and visualizes it in real-time using various graphs and telemetry cards.
+
+
+
+## Mission States & Video Feedback
+
+The dashboard actively monitors the incoming telemetry to evaluate the mission's status. Depending on the final altitude, the integrated Video Player will dynamically display a specific video:
+
+* **Mission Success**: The rocket successfully reaches the target altitude range without exceeding the upper limit. The player will trigger a victory video.
+* **Mission Failed (Overshoot)**: The rocket exceeds the maximum allowed altitude limit during the ascent. This triggers the fail video defined by the `OVERSHOOT_VIDEO_SRC` flag.
+* **Mission Failed (Undershoot)**: The flight fails to reach the minimum target altitude. This triggers the fail video defined by the `UNDERSHOOT_VIDEO_SRC` flag.
+
 ## This project was created with the [Solid CLI](https://github.com/solidjs-community/solid-cli)
